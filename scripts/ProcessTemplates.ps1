@@ -232,7 +232,7 @@ Function CloneAndPullLocalizedRepos {
             #git pull
         } else {
             Write-Host "Cloning $docGitServer$repoName.git at $lang ..."
-            git clone "$docGitServer$repoName.git" $lang
+            git clone --single-branch --branch master --no-tags "$docGitServer$repoName.git" $lang
         }
     }
     Pop-Location
