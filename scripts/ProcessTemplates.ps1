@@ -14,23 +14,23 @@ $azureBlobFileNameBase = "community-templates-V2";
 $repoBaseName = "Application-Insights-Workbooks"
 $supportedLanguages = @(
     $defaultLanguage,
-    "cs-cz"
-#    "de-de",
-#    "es-es", 
-#    "fr-fr", 
-#    "hu-hu", 
-#    "it-it", 
-#    "ja-jp", 
-#    "ko-kr",
-#    "nl-nl", 
-#    "pl-pl", 
-#    "pt-br", 
-#    "pt-pt", 
-#    "ru-ru", 
-#    "sv-se", 
-#    "tr-tr", 
-#    "zh-cn", 
-#    "zh-tw",
+    "cs-cz",
+    "de-de",
+    "es-es", 
+    "fr-fr", 
+    "hu-hu", 
+    "it-it", 
+    "ja-jp", 
+    "ko-kr",
+    "nl-nl", 
+    "pl-pl", 
+    "pt-br", 
+    "pt-pt", 
+    "ru-ru", 
+    "sv-se", 
+    "tr-tr", 
+    "zh-cn", 
+    "zh-tw"
 )
 $docGitServer = "https://github.com/MicrosoftDocs/"
 
@@ -358,6 +358,182 @@ Function BuildingTemplateJson() {
     Write-Host "... DONE building template: $outputPath\$jsonFileName <<<<<"
 }
 
+#--------------------------------------------------------------------------------------------------
+# SECTION - new methods for creating package content.  hypothetically 
+# almost everything above here will completely go away once the package
+# stuff is finished
+#--------------------------------------------------------------------------------------------------
+
+
+#----------------------------------------------------------------------------
+# GetFieldForLanguage
+# given an object like {
+#    "en-us": { someobject },
+#    "cs-cz": { someotherobject }
+#}
+# return the field value for the specific language, or fall back to en-us
+#----------------------------------------------------------------------------
+Function GetValueForLanguageOrDefault() {
+    param(
+        [object] $object,
+        [string] $language
+    )
+
+    # the name is either in a language specific field OR in en-us (even in the localized repos!)
+    $info = $object.$($language);
+    if ($null -eq $info) {
+        $info = $object.$($defaultLanguage);
+    }
+    return $info
+}
+
+#----------------------------------------------------------------------------
+# Create a category object with key and other metadata
+#----------------------------------------------------------------------------
+Function CreateCategory() {
+    param(
+        [string] $key,
+        [object] $metadata
+    )
+
+    $c = @{}
+    $c.key = $key
+    $c.name = $metadata.name
+    if (![string]::IsNullOrWhitespace($metadata.description)) {
+        $c.description = $metadata.description
+    }
+    if ($null -ne $metadata.order) {
+        $c.order = $metadata.order
+    }
+
+    return $c
+}
+
+#----------------------------------------------------------------------------
+# LoadCategoriesJson
+# loads a categories.json file and returns category info. because it could be
+# virtual categories, this returns an array of metadata
+#----------------------------------------------------------------------------
+Function LoadCategoriesJson() {
+    param(
+        [string] $categoriesMetadataFilePath,
+        [string] $language
+    )
+
+    $virtualCategoriesSettings = Get-Content $categoriesMetadataFilePath -Encoding UTF8 | Out-String | ConvertFrom-Json 
+
+    $result = @()
+
+    # if the file has a categories field, this is virtual categories
+    if ($null -ne $virtualCategoriesSettings.categories) {
+        foreach ($category in $virtualCategoriesSettings.categories) {
+            $info = GetValueForLanguageOrDefault $category.settings $language
+            if ($null -ne $info) {
+                $result += CreateCategory $category.key $info
+            }
+        }
+    } else {
+        # otherwise, this is the category info for a single folder, the key is the folder name
+        # TODO: this implies nested folders could end up with duplicate category info?
+        $templateFolderPath = Split-Path $categoriesMetadataFilePath -Parent
+        $templateCategory = Split-Path $templateFolderPath -Leaf
+
+        # the name is either in a language specific field OR in en-us (even in the localized repos!)
+        $info = GetValueForLanguageOrDefault $virtualCategoriesSettings $language
+        if ($null -ne $info) {
+            $result += CreateCategory $templateCategory $info
+        }
+    }
+    return $result
+}
+
+Function CreateOrderedTemplate() {
+    param([object] $metadata, 
+          [object] $order)
+
+    $result = @{}
+    $result.name = $metadata.name
+    $result.order = $order
+
+    # only copy other fields that are actually set
+    if (![string]::IsNullOrWhitespace($metadata.path)) {
+        $result.path = $metadata.path
+    }
+    if (![string]::IsNullOrWhitespace($metadata.filename)) {
+        $result.filename = $metadata.filename
+    }
+    if (![string]::IsNullOrWhitespace($metadata.author)) {
+        $result.author = $metadata.author
+    }
+    if (![string]::IsNullOrWhitespace($metadata.description)) {
+        $result.description = $metadata.description
+    }
+    if ($null -ne $metadata.tags) {
+        $result.tags = $metadata.tags
+    }
+    if (![string]::IsNullOrWhitespace($metadata.icon)) {
+        $result.iconUrl = $metadata.icon
+    }
+    if (![string]::IsNullOrWhitespace($metadata.readme)) {
+        $result.readme = $metadata.readme
+    }
+    if ($null -ne $metadata.isPreview) {
+        $result.isPreview = $metadata.isPreview
+    }
+
+    return $result
+}
+
+#----------------------------------------------------------------------------
+# LoadSettingsJson
+# loads a settings.json file and returns workbook metadata
+#----------------------------------------------------------------------------
+Function LoadSettingsJson() {
+    param([string] $filepath)
+    $templateSettings = Get-Content $filepath -Encoding UTF8 | Out-String | ConvertFrom-Json 
+
+    # Build path of file
+    $templateFolderPath = Split-Path $filepath -Parent
+    $templateFolderName = Split-Path $templateFolderPath -Leaf
+    $templateCategoryFolderPath = Split-Path $templateFolderPath
+    $templateCategory = Split-Path $templateCategoryFolderPath -Leaf
+    $templateReportTypePath = Split-Path $templateCategoryFolderPath
+    $templateReportType = Split-Path $templateReportTypePath -Leaf
+
+    # path here should really be called "id" as it is the id of the template
+    # at some point, we'll need to support aliases or moving of templates so we need to
+    # split the id from the filename
+    $templateMetadata = @{}
+    $templateMetadata.category = $templateCategory
+    $templateMetadata.path = "$templateReportType/$templateCategory/$templateFolderName"
+    # for now, all of the template in the package are just .json to simplify deployment and not need special rules for .cohort, .workbook on web services for content type
+    # and replace any / in filenames with - to avoid any filesystem issues
+    $templateMetadata.filename = "$templateCategory-$templateFolderName.json".Replace("/", "-")
+    $templateMetadata.name = $templateSettings.name
+    $templateMetadata.author = $templateSettings.author
+    # only copy fields that are actually set
+    if (![string]::IsNullOrWhitespace($templateSettings.description)) {
+        $templateMetadata.description = $templateSettings.description
+    }
+    if ($null -ne $templateSettings.tags) {
+        $templateMetadata.tags = $templateSettings.tags
+    }
+    if ($null -ne $templateSettings.galleries) {
+        $templateMetadata.galleries = $templateSettings.galleries
+    }
+    if (![string]::IsNullOrWhitespace($templateSettings.icon)) {
+        $templateMetadata.iconUrl = $templateSettings.icon
+    }
+    if (![string]::IsNullOrWhitespace($templateSettings.readme)) {
+        $templateMetadata.readme = $templateSettings.readme
+    }
+    if ($null -ne $templateSettings.isPreview) {
+        $templateMetadata.isPreview = $templateSettings.isPreview
+    }
+
+    return $templateMetadata
+}
+
 #----------------------------------------------------------------------------
 # create the package content for a given language
 # produce an "gallery.json" file that contains all of the templates by type/gallery
@@ -375,98 +551,179 @@ Function CreatePackageContent() {
 
     # create output folder if it doesn't exist
     if (!(Test-Path $outputPath)) {
-        mkdir $outputPath
+        mkdir $outputPath | Out-Null 
     }
 
-    $packagePath = "$outputPath/package"
+    $packagePath = "$outputPath\package"
 
     if (!(Test-Path $packagePath)) {
-        mkdir $packagePath
+        mkdir $packagePath | Out-Null 
     }
 
-    $lang = CheckLanguageOrUseDefault $language
+    $language = CheckLanguageOrUseDefault $language
+    if (!(Test-Path "$packagePath\$language")) {
+        mkdir "$packagePath\$language" | Out-Null 
+    }
 
-    # find all the important files
-    $files = Get-ChildItem "$sourcePath\$reporttype" -Recurse -file -Include "categoryresources.json", "*.workbook", "*.cohort", "settings.json", "*.svg"
+    for ($i = 0; $i -lt $reportTypes.length; $i++) {
+        $reporttype = $reportTypes[$i]
+        $extension = $templateExtensions[$i]
 
-    $reports = Get-ChildItem $currentPath
+        Write-Host "Building gallery:$reporttype $language..."
+
+        $reportTypePath = "$packagePath\$language\$reporttype"
+
+        if (!(Test-Path $reportTypePath)) {
+            mkdir $reportTypePath | Out-Null 
+        }
 
 
-    # initialize the gallery and index
-    $gallery = @{ }
-    $index = @{ }
+        $fullGallery = @{}
+        $index = @{}
+        $allCategories = @{}
+        # find all the important files and run one pass for each kind
+        # 1) categoryresources.json - to create virtual galleries
+        # 2) settings.json, to find all the workbooks and what galleries they are in
 
-    foreach ($report in $reports) {
-        $reportType = $report.Name
-
-        if ($reportTypes.Contains($reportType)) {
-
-            $payload.$reportType = @{ }
-
-            #find all of the categories: any categoryresources.json file is a virtual category
-            # i think this part doesn' twork right for loc though?
-            $categories = Get-ChildItem $report.FullName -Include $categoryMetadataFileName -recurse
-            foreach ($category in $categories) {
-                AddVirtualCategories $payload.$reportType $category.FullName $lang
+        $categories = Get-ChildItem "$currentPath\$reporttype" -Recurse -file -Include "categoryresources.json"
+        foreach ($categoryFile in $categories) {
+            $categoryMetadatas = LoadCategoriesJson $categoryFile $language
+            if ($null -eq $categoryMetadatas -or 0 -eq $categoryMetadatas.Count) {
+                Write-Host "WARNING: ignoring $($categoryFile.FullName) because it has no categories for $language"
+                continue;
             }
 
-            # now process all folders that could be categories themselves
-            $categories = Get-ChildItem $report.FullName -Exclude $categoryMetadataFileName
-
-            foreach ($category in $categories) {
-
-                $categoryName = $category.Name
-                $templates = Get-ChildItem $category.FullName
-    
-                $categorySettingsPath = Join-Path $category.FullName $categoryMetadataFileName 
-                $categorySettings = Get-Content $categorySettingsPath -Encoding UTF8 | Out-String | ConvertFrom-Json 
-
-                AddCategory $categoryName ($payload.$reportType) $categorySettings $lang
-
-                foreach ($templateFolder in $templates) {
-                    
-                    if ($templateFolder -is [System.IO.DirectoryInfo]) {
-                        $templateFiles = Get-ChildItem $templateFolder.FullName
-                        $templateMetadata = @{ }
-                        $templateMetadata.TemplateByLanguage = @{ }
-                        $templateMetadata.Name = $templateFolder.Name
-
-                        # First get template populate template data for default language, which is a top level
-                        $templateMetadata.TemplateByLanguage.$lang = GetTemplateContainerData $templateFolder.FullName $language $packagePath
-
-                        AddTemplatesToVirtualGallery $templateMetadata $language
-
-                        #Then look at any subfolders which correspond to localized data
-                        #this is theoretically how non-microsoft content gets localized?
-                        foreach ($templateSubfolders in $templateFiles) {
-
-                           if ($templateSubfolders -is [System.IO.DirectoryInfo]) {
-                               $templateMetadata.TemplateByLanguage.($templateSubfolders.name) = GetTemplateContainerData $templateSubfolders.FullName $language $packagePath
-                          }
-                        }
-
-                        # Add Template container
-                        $payload.$reportType.$categoryName.TemplateContainers += $templateMetadata
-
-                    }
+            foreach ($category in $categoryMetadatas) {
+                if ($null -ne $allCategories.$($category.key)) {
+                    Write-Host "WARNING: $($categoryFile.FullName) for $language contained duplicate category $($category.key)"
                 }
+                $allCategories.$($category.key) = $category
             }
         }
+        
+        $settings = Get-ChildItem "$currentPath\$reporttype" -Recurse -file -Include "settings.json"
+        foreach ($settingFile in $settings) {
+            # foreach settings file, find the first item in the folder and warn if there's more than one
+            $folder = Split-path $settingFile.FullName -Parent
+            $languageSpecifictemplates = $null;
+
+            # SPECIAL CASES!  if this folder has a subfolder with the language in it, grab the contents from there instead!
+            $overrideLanguagePath = "$folder\$language"
+            if (Test-Path $overrideLanguagePath) {
+                # if there's a language specific settings json, grab that
+                if (Test-Path "$overrideLanguagePath\settings.json") {
+                    $settingsFile = Get-ChildItem $overrideLanguagePath -file -filter "settings.json"
+                }
+                # see if there's language specific templates
+                $languageSpecificTemplates = Get-ChildItem $overrideLanguagePath -file -filter "*.$extension"
+            }
+
+            # if there's a language specific template, use those
+            if ($languageSpecificTemplates -eq $null -or $languageSpecificTemplates.Count -eq 0) {
+                $templates = Get-ChildItem $folder -file -filter "*.$extension"
+            } else {
+                Write-Host "INFO: $folder has language specific template for $language"
+                $templates = $languageSpecificTemplates
+            }
+
+            if ($templates.Count -eq 0) {
+                Write-Host "WARNING: ignoring $($settingFile.FullName) because it has no .$extension file"
+                continue
+            } elseif ($templates.Count -gt 1) {
+                Write-Host "WARNING: ignoring extra files in $($settingFile.FullName), only the first .$extension file will be used"
+                Write-Host "-- (found $($templates.Count) : $templates)"
+            }
+            $template = $templates[0]
+
+            $setting = LoadSettingsJson($settingFile.FullName)
+
+            if ($null -eq $setting -or $null -eq $setting.name) {
+                Write-Host "ERROR: ignoring $($settingFile.FullName) because it is not a valid settings.json file "
+                continue;
+            }
+
+            if ($null -ne $setting.galleries) {
+                foreach ($gallery in $setting.galleries) {
+                    $galleryName = "$($gallery.type)-$($gallery.resourceType)"
+
+                    $existingGallery = $fullGallery.$($galleryName)
+                    if ($null -eq $existingGallery) {
+                        $existingGallery = @{}
+                        $fullGallery.($galleryName) = $existingGallery
+                    }
+
+                    # if the gallery entry has a category key, use that instead of the folder based category
+                    $categoryKey = $gallery.categoryKey;
+                    if ($null -eq $categoryKey) {
+                        $categoryKey = $setting.category;
+                    }
+
+                    $categoryInfo = $allCategories.$($categoryKey);
+
+                    $existingCategory = $existingGallery.$($categoryKey);
+                    if ($null -eq $existingCategory) {
+                        $existingCategory = @{};
+                        $existingCategory.templates = @();
+                        if ($null -ne $categoryInfo) {
+                            $existingCategory.name = $categoryInfo.name
+                            if (![string]::IsNullOrWhitespace($categoryInfo.description)) {
+                                $existingCategory.description = $categoryInfo.description
+                            }
+                            $existingCategory.order = $categoryInfo.order
+                        } else {
+                            # shouldn't really be possible based on the work before here, but just in case
+                            Write-Host "ERROR: $($categoryKey) from $($settingFile.FullName) is missing categoryResources.json metadata"
+                            $existingCategory.name = $categoryKey
+                        }
+                        $existingGallery.$($categoryKey) = $existingCategory
+                    }
+
+                    $existingCategory.templates += CreateOrderedTemplate $setting $gallery.order
+                }
+            }
+
+            # add the item to the full index
+            $filename = $setting.filename
+            $index.($setting.path) = $filename
+            # copy the file to the package output
+            $destination = "$reportTypePath\$filename"
+            #Write-Host "copying $filename to $destination"
+
+            # not generally possible, but could happen if people created folder a, filename b-c and folder a-b, filename c, as both would end up "a-b-c"
+            if (Test-Path $destination) {
+                 Write-Host "ERROR: duplicate file name $destination"
+            }
+            Copy-Item -Path $template.FullName -Destination $destination -Force
+        }
+
+        # split this single file up into one file per gallery
+        foreach ($key in $fullGallery.Keys) {
+            $value = $fullGallery.$($key)
+            $key = $key.Replace("/", "-")
+            $galleryFileName = "$reportTypePath\_gallery.$key.json"
+            $value | ConvertTo-Json -depth 10 -Compress | Out-File -FilePath $galleryFileName -Force
+        }
+
+        # if you want to see the full gallery of everything, this would generate it
+        if ($generateFullGalleryFile) {
+            $galleryFileName = "$reportTypePath\_gallery.json"
+            $fullGallery | ConvertTo-Json -depth 10 -Compress | Out-File -FilePath $galleryFileName -Force
+        }
+
+        # create an index that has every path mapped to a file name
+        # this includes items NOT in galleries.  hypothetically this might not be necessary as the
+        # client side code could generate the right filenames, but then you don't know if you got a 404 because
+        # of missing files or inaccuate generation.  Whether the client uses it or not, the package has it!
+        $indexFileName = "$reportTypePath\_index.json"
+        $index | ConvertTo-Json -depth 2 -Compress | Out-File -FilePath $indexFileName -Force
+
+        if ($generateFullCategoriesFile) {
+            $categoryFileName = "$reportTypePath\_categories.json"
+            $allCategories | ConvertTo-Json -depth 2 -Compress | Out-File -FilePath $categoryFileName -Force
+        }
+
+        Write-Host "... DONE building gallery: $galleryFileName $reporttype "
     }
-
-    Write-Host "Done building gallery"
-
-    Write-Host "Copying artifacts"
-    $artifactContent = $payload | ConvertTo-Json -depth 10 -Compress
-
-    $jsonFileName = "gallery.$language.json"
-    # delete existing json file
-    if (Test-Path "$outputPath\$jsonFileName") {
-        Remove-Item "$outputPath\$jsonFileName"
-    }
-
-    $artifactContent | Out-File -FilePath "$outputPath\$jsonFileName"
-    Write-Host "... DONE building gallery: $outputPath\$jsonFileName <<<<<"
 }
 
 # ------------------------------
@@ -492,14 +749,17 @@ Function SyncWithEnUs() {
                 Write-Host "[#WARNING: missing File]: copying file $fullPath to $scriptpath"
                 # use newitem force to create the full path structure if it doesn't exist
                 if (!(Test-Path (Split-Path -Path $scriptpath))) {
-                    New-Item -ItemType File -Path $scriptpath -Force
+                    New-Item -ItemType File -Path $scriptpath -Force | Out-null
                 }
                 Copy-Item -Path $fullPath -Destination $scriptpath
                 $created++
             }
         }
     }
-    Write-Host "WARNING: $lang - copied $created missing files of $total"
+
+    if ($created -ne 0) {
+        Write-Host "WARNING: $lang - copied $created missing files of $total"
+    }
 }
 
 #----------------------------------------------------------------------------
@@ -538,6 +798,10 @@ Push-Location
 # process localized repo
 # en-us gets done first so that the content is there to sync up with all the other languages
 foreach ($lang in $supportedLanguages) {
+    Write-Host ""
+    Write-Host "Processing..."
+    Write-Host "...Language: $lang"
+
     if ($lang -eq $defaultLanguage) {
         $repoName = $repoBaseName
         $currentPath = $mainPath
@@ -549,21 +813,21 @@ foreach ($lang in $supportedLanguages) {
     Set-Location -Path $currentPath
     $jsonFileName = "$azureBlobFileNameBase.$lang.json"
 
-    Write-Host ""
-    Write-Host "Processing..."
     Write-Host "...Repo: $repoName"
-    Write-Host "...Language: $lang"
     Write-Host "...Directory: $currentPath"
     Write-Host "...OutputFile: $jsonFileName"
 
-    #BuildingTemplateJson $jsonFileName $lang $outputPath
-    #CreatePackageContent $lang $outputPath
+    # OLD-WAY for ALM Service: build the old template content
+    BuildingTemplateJson $jsonFileName $lang $outputPath
+
+    # NEW-WAY make content for npm package
+    CreatePackageContent $lang $outputPath
 }
 
 # restore default path
 Pop-Location
 
-# duplicate json for en-us to be compatible with existing process
+# OLD-WAY for ALM Service: duplicate json for en-us to be compatible with existing process
 Copy-Item -Path $outputPath\$azureBlobFileNameBase.$defaultLanguage.json -Destination $outputPath\$azureBlobFileNameBase.json
 
 Write-Host "Done copying artifacts Existing"
