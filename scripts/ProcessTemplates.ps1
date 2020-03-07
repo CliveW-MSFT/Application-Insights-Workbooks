@@ -452,13 +452,12 @@ Function CreateOrderedTemplate() {
           [object] $order)
 
     $result = @{}
+    # these are required and should be there
     $result.name = $metadata.name
     $result.order = $order
+    $result.id = $metadata.id
 
     # only copy other fields that are actually set
-    if (![string]::IsNullOrWhitespace($metadata.path)) {
-        $result.path = $metadata.path
-    }
     if (![string]::IsNullOrWhitespace($metadata.filename)) {
         $result.filename = $metadata.filename
     }
@@ -505,7 +504,7 @@ Function LoadSettingsJson() {
     # split the id from the filename
     $templateMetadata = @{}
     $templateMetadata.category = $templateCategory
-    $templateMetadata.path = "$templateReportType/$templateCategory/$templateFolderName"
+    $templateMetadata.id = "$templateReportType/$templateCategory/$templateFolderName"
     # for now, all of the template in the package are just .json to simplify deployment and not need special rules for .cohort, .workbook on web services for content type
     # and replace any / in filenames with - to avoid any filesystem issues
     $templateMetadata.filename = "$templateCategory-$templateFolderName.json".Replace("/", "-")
@@ -684,7 +683,7 @@ Function CreatePackageContent() {
 
             # add the item to the full index
             $filename = $setting.filename
-            $index.($setting.path) = $filename
+            $index.($setting.id) = $filename
             # copy the file to the package output
             $destination = "$reportTypePath\$filename"
             #Write-Host "copying $filename to $destination"
@@ -829,5 +828,8 @@ Pop-Location
 
 # OLD-WAY for ALM Service: duplicate json for en-us to be compatible with existing process
 Copy-Item -Path $outputPath\$azureBlobFileNameBase.$defaultLanguage.json -Destination $outputPath\$azureBlobFileNameBase.json
+
+# NEW-WAY: copy package.json into the output/package directory
+Copy-Item -Path $mainPath\package.json -Destination $outputPath\package
 
 Write-Host "Done copying artifacts Existing"
